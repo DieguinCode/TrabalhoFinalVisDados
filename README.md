@@ -3,7 +3,8 @@
 ## Alunos
 
 Diego Caracas Mendes - 542564
-495154 - Daniel Santos Maciel
+
+Daniel Santos Maciel - 495154  
 
 ## Pré-requisitos
 
