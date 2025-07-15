@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trabalho Final - Visualização de Dados</title>
+    
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/topojson-client@3"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 2em;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+        h1, h2 {
+            text-align: center;
+        }
+
+        .chart-container {
+            max-width: 960px;
+            margin: 40px auto;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .country { fill: #ccc; stroke: #fff; stroke-width: 0.5px; }
+        .host-country { fill: #ffc107; stroke: #a07404; }
+        .map-tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 5px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .slider-container { margin-top: 20px; max-width: 600px; margin-left: auto; margin-right: auto; }
+        .year-label { font-size: 24px; font-weight: bold; margin-bottom: 10px; text-align: center; }
+
+        .chord-container text {
+            font-size: 11px;
+        }
+        .chord-container path {
+            transition: opacity 0.2s;
+        }
+        .chord-container .chord:hover {
+            opacity: 0.6;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Dashboard de Análises de Futebol ⚽</h1>
+
+    <div class="chart-container">
+        <h2>Top 10 Clubes Gastadores e Suas Transferências</h2>
+        <div id="chord-diagram"></div>
+    </div>
+
+    <div class="chart-container">
+        <h2>Países-Sede da Copa do Mundo</h2>
+        <div id="world-map"></div>
+    </div>
+
+    <script>
+    async function drawCharts() {
+
+        const [transfersRaw, fifaData, worldAtlas] = await Promise.all([
+            d3.csv("transfers.csv"),
+            d3.csv("FIFA - World Cup Summary.csv", d3.autoType), 
+            d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json")
+        ]);
+
+        // --- 1. DIAGRAMA DE CORDAS ---
+        
+        function parseFee(fee) {
+            if (!fee) return null;
+            const s = fee.replace("€", "").trim().toLowerCase();
+            if (["0", "0.0", "0.00", "0m", "0th.", "free"].includes(s)) return 0;
+            const val = parseFloat(s);
+            return isNaN(val) ? null : val;
+        }
+
+        const processed = transfersRaw
+            .map(d => ({
+                source: d.from_club_name,
+                target: d.to_club_name,
+                feeM: parseFee(d.transfer_fee)
+            }))
+            .filter(d => d.feeM !== null);
+
+        const spending = {};
+        processed.forEach(({ target, feeM }) => {
+            spending[target] = (spending[target] || 0) + feeM;
+        });
+        const topSpenders = Object.entries(spending)
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 10)
+            .map(([club]) => club);
+
+        const clubIndex = new Map(topSpenders.map((club, i) => [club, i]));
+        const n = topSpenders.length;
+        const matrix = Array.from({ length: n }, () => Array(n).fill(0));
+        processed.forEach(({ source, target, feeM }) => {
+            const i = clubIndex.get(source);
+            const j = clubIndex.get(target);
+            if (i !== undefined && j !== undefined) {
+                matrix[i][j] += feeM;
+            }
+        });
+
+        const widthChord = 700;
+        const heightChord = 700;
+        const innerRadius = Math.min(widthChord, heightChord) * 0.5 - 120;
+        const outerRadius = innerRadius + 10;
+        const chord = d3.chord().padAngle(0.05).sortSubgroups(d3.descending)(matrix);
+        const color = d3.scaleOrdinal(topSpenders, d3.schemeTableau10);
+
+        const svgChord = d3.select("#chord-diagram").append("svg")
+            .attr("width", widthChord)
+            .attr("height", heightChord)
+            .attr("viewBox", [-widthChord / 2, -heightChord / 2, widthChord, heightChord])
+            .attr("class", "chord-container");
+
+        const groups = svgChord.append("g").selectAll("g").data(chord.groups).join("g");
+        const arc = d3.arc().innerRadius(innerRadius).outerRadius(outerRadius);
+        groups.append("path")
+            .attr("d", arc)
+            .attr("fill", d => color(topSpenders[d.index]))
+            .attr("stroke", d => d3.rgb(color(topSpenders[d.index])).darker())
+            .append("title")
+            .text(d => `${topSpenders[d.index]}\nGastou: €${d3.sum(matrix[d.index]).toFixed(1)}M\nRecebeu: €${d3.sum(matrix, row => row[d.index]).toFixed(1)}M`);
+        
+        groups.append("text")
+            .each(d => { d.angle = (d.startAngle + d.endAngle) / 2; })
+            .attr("dy", "0.35em")
+            .attr("transform", d => `rotate(${(d.angle * 180 / Math.PI - 90)}) translate(${outerRadius + 5}) ${d.angle > Math.PI ? "rotate(180)" : ""}`)
+            .attr("text-anchor", d => d.angle > Math.PI ? "end" : "start")
+            .text(d => topSpenders[d.index]);
+
+        const ribbon = d3.ribbon().radius(innerRadius);
+        svgChord.append("g")
+            .attr("class", "chord")
+            .selectAll("path")
+            .data(chord)
+            .join("path")
+            .attr("d", ribbon)
+            .attr("fill", d => color(topSpenders[d.source.index]))
+            .attr("stroke", d => d3.rgb(color(topSpenders[d.source.index])).darker())
+            .append("title")
+            .text(d => `${topSpenders[d.source.index]} → ${topSpenders[d.target.index]}: €${d.source.value.toFixed(1)}M`);
+
+
+        // --- 2. MAPA DA COPA DO MUNDO  ---
+        
+        const mapContainer = d3.select("#world-map");
+        const tooltip = mapContainer.append("div").attr("class", "map-tooltip");
+        const yearLabel = mapContainer.append("div").attr("class", "year-label");
+        const sliderContainer = mapContainer.append("div").attr("class", "slider-container");
+        const slider = sliderContainer.append("input")
+            .attr("type", "range").attr("min", 0).attr("max", fifaData.length - 1).attr("value", 0).attr("step", 1).style("width", "100%");
+
+        const widthMap = 960;
+        const heightMap = 500;
+        const svgMap = mapContainer.append("svg").attr("viewBox", `0 0 ${widthMap} ${heightMap}`);
+
+        const projection = d3.geoMercator().scale(140).translate([widthMap / 2, heightMap / 1.4]);
+        const path = d3.geoPath(projection);
+        const g = svgMap.append("g");
+        
+        const countries = topojson.feature(worldAtlas, worldAtlas.objects.countries).features;
+        const nameCorrections = { "West Germany": "Germany", "South Korea": "Republic of Korea", "USA": "United States of America" };
+
+        g.selectAll("path").data(countries).enter().append("path").attr("class", "country").attr("d", path);
+
+        function updateMap(yearIndex) {
+            const cup = fifaData[yearIndex];
+            let hostName = cup.HOST.split(' & ')[0];
+            if (nameCorrections[hostName]) { hostName = nameCorrections[hostName]; }
+            const hostCountry = countries.find(c => c.properties.name === hostName);
+            yearLabel.text(`${cup.YEAR} - ${cup.HOST}`);
+            g.selectAll(".country").classed("host-country", d => d.properties.name === hostName);
+            if (hostCountry) {
+                const [[x0, y0], [x1, y1]] = path.bounds(hostCountry);
+                const zoom = Math.min(8, 0.9 / Math.max((x1 - x0) / widthMap, (y1 - y0) / heightMap));
+                const center = [(x0 + x1) / 2, (y0 + y1) / 2];
+                g.transition().duration(750).attr("transform", `translate(${widthMap / 2}, ${heightMap / 2}) scale(${zoom}) translate(${-center[0]}, ${-center[1]})`);
+            } else {
+                g.transition().duration(750).attr("transform", "");
+            }
+        }
+        
+        function updateTooltip() {
+            const cup = fifaData[slider.node().value];
+            tooltip.html(`<strong>Copa de ${cup.YEAR}</strong><br/>Sede: ${cup.HOST}<br/>Campeão: ${cup.CHAMPION}<br/>Vice: ${cup["RUNNER UP"]}`);
+        }
+
+        slider.on("input", function() { updateMap(this.value); updateTooltip(); });
+        mapContainer.on("mousemove", (event) => tooltip.style("left", (event.pageX + 15) + "px").style("top", (event.pageY + 10) + "px"));
+        mapContainer.on("mouseenter", () => tooltip.style("opacity", 0.9));
+        mapContainer.on("mouseleave", () => tooltip.style("opacity", 0));
+
+        updateMap(0);
+        updateTooltip();
+    }
+
+    drawCharts();
+    </script>
+</body>
+</html>
