@@ -7,6 +7,9 @@
     
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://unpkg.com/topojson-client@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
     
     <style>
         body {
@@ -52,6 +55,26 @@
         .chord-container .chord:hover {
             opacity: 0.6;
         }
+        
+        #transfers-chart, #transfers-values {
+            display: flex;
+            justify-content: center;
+        }
+        
+        .grid-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            max-width: 960px;
+            margin: 0 auto;
+        }
+        
+        .grid-item {
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+        }
     </style>
 </head>
 <body>
@@ -68,8 +91,20 @@
         <div id="world-map"></div>
     </div>
 
+    <div class="chart-container">
+        <h2>Transferências por Ano</h2>
+        <div id="transfers-chart"></div>
+    </div>
+    
+    <div class="chart-container">
+        <h2>Transferências Mais Valiosas</h2>
+        <div id="transfers-values"></div>
+    </div>
+    
+
     <script>
     async function drawCharts() {
+        const WIDTH = 800; // Definindo a largura padrão para os gráficos
 
         const [transfersRaw, fifaData, worldAtlas] = await Promise.all([
             d3.csv("transfers.csv"),
@@ -208,11 +243,139 @@
 
         updateMap(0);
         updateTooltip();
+
+        // --- 3. GRÁFICO DE LINHAS DE TRANSFERÊNCIAS ---
+
+        // Processar datas para garantir que estão no formato correto
+        transfersRaw.forEach(d => {
+            if (d.transfer_date) {
+                const date = new Date(d.transfer_date);
+                if (!isNaN(date.getTime())) {
+                    d.transfer_date = date;
+                }
+            }
+        });
+
+        const lineSpec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Transferências por ano (até 2024)",
+            "data": {"values": transfersRaw},
+            "mark": {"type": "line", "point": true},
+            "encoding": {
+                "x": {
+                    "field": "transfer_date",
+                    "type": "temporal",
+                    "timeUnit": "year",
+                    "title": "Ano"
+                },
+                "y": {
+                    "aggregate": "count",
+                    "title": "Número de Transferências"
+                }
+            },
+            "width": WIDTH,
+            "height": 300,
+            "config": {
+                "axis": {
+                    "labelFontSize": 12,
+                    "titleFontSize": 14
+                },
+                "title": {
+                    "fontSize": 16,
+                    "anchor": "start"
+                }
+            }
+        };
+
+        // Renderizar o gráfico Vega-Lite
+        vegaEmbed("#transfers-chart", lineSpec)
+            .then(result => console.log("Gráfico de transferências renderizado com sucesso"))
+            .catch(error => console.error("Erro ao renderizar gráfico de transferências:", error));
+
+        // --- 4. GRÁFICO DE BARRAS DAS TRANSFERÊNCIAS MAIS VALIOSAS ---
+        
+        // Processar valores de transferência
+        const transfersWithValues = transfersRaw.map(d => {
+            const fee = parseFee(d.transfer_fee);
+            return {
+                ...d,
+                transfer_fee: fee !== null ? fee : 0,
+                transfer_year: d.transfer_date ? new Date(d.transfer_date).getFullYear() : 'N/A'
+            };
+        }).filter(d => d.transfer_fee > 0);
+
+        const barSpec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Top 10 Transferências Mais Valiosas",
+            "data": {"values": transfersWithValues},
+            "transform": [
+                {
+                    "window": [{"op": "rank", "as": "rank"}],
+                    "sort": [{"field": "transfer_fee", "order": "descending"}]
+                },
+                {"filter": "datum.rank <= 10"}
+            ],
+            "mark": {
+                "type": "bar",
+                "tooltip": true
+            },
+            "encoding": {
+                "y": {
+                    "field": "player_name",
+                    "type": "nominal",
+                    "sort": {"field": "transfer_fee", "order": "descending"},
+                    "title": "Jogador"
+                },
+                "x": {
+                    "field": "transfer_fee",
+                    "type": "quantitative",
+                    "title": "Valor (€ milhões)"
+                },
+                "color": {
+                    "field": "to_club_name",
+                    "type": "nominal",
+                    "title": "Clube Destino",
+                    "legend": {
+                        "orient": "bottom",
+                        "columns": 2,
+                        "titleLimit": 0
+                    }
+                },
+                "tooltip": [
+                    {"field": "player_name", "title": "Jogador"},
+                    {"field": "transfer_fee", "title": "Valor", "format": ".2f"},
+                    {"field": "to_club_name", "title": "Clube Destino"},
+                    {"field": "from_club_name", "title": "Clube Origem"},
+                    {"field": "transfer_year", "title": "Ano"}
+                ]
+            },
+            "width": WIDTH / 2,
+            "height": 300,
+            "config": {
+                "axis": {
+                    "labelFontSize": 12,
+                    "titleFontSize": 14
+                },
+                "legend": {
+                    "labelFontSize": 12,
+                    "titleFontSize": 14
+                },
+                "title": {
+                    "fontSize": 16,
+                    "anchor": "start"
+                }
+            }
+        };
+
+        // Renderizar o gráfico de barras
+        vegaEmbed("#transfers-values", barSpec)
+            .then(result => console.log("Gráfico de valores de transferência renderizado com sucesso"))
+            .catch(error => console.error("Erro ao renderizar gráfico de valores:", error));
     }
 
     drawCharts();
     </script>
 
-    <iframe width="100%" height="828" frameborder="0" src="https://observablehq.com/embed/71b7979d162a773a@289?cells=simple_graphics"></iframe>
+
 </body>
 </html>
