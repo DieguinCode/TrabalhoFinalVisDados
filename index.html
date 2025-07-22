@@ -100,11 +100,16 @@
         <h2>Transferências Mais Valiosas</h2>
         <div id="transfers-values"></div>
     </div>
-    
+
+    <div class="chart-container">
+        <h2>Mapa de Calor de Eventos por Minuto e Tipo</h2>
+        <div id="heatmap-events"></div>
+    </div>
+
 
     <script>
     async function drawCharts() {
-        const WIDTH = 800; // Definindo a largura padrão para os gráficos
+        const WIDTH = 800;
 
         const [transfersRaw, fifaData, worldAtlas] = await Promise.all([
             d3.csv("transfers.csv"),
@@ -287,7 +292,6 @@
             }
         };
 
-        // Renderizar o gráfico Vega-Lite
         vegaEmbed("#transfers-chart", lineSpec)
             .then(result => console.log("Gráfico de transferências renderizado com sucesso"))
             .catch(error => console.error("Erro ao renderizar gráfico de transferências:", error));
@@ -367,10 +371,77 @@
             }
         };
 
-        // Renderizar o gráfico de barras
         vegaEmbed("#transfers-values", barSpec)
             .then(result => console.log("Gráfico de valores de transferência renderizado com sucesso"))
             .catch(error => console.error("Erro ao renderizar gráfico de valores:", error));
+
+        // --- 5. HEATMAP DE EVENTOS POR MINUTO E TIPO ---
+
+        d3.csv("game_events.csv").then(gameEvents => {
+            const counts = {};
+            gameEvents.forEach(d => {
+                const minute = +d.minute;
+                const type = d.type;
+                if (!isNaN(minute) && type) {
+                    const key = `${type}-${minute}`;
+                    counts[key] = (counts[key] || 0) + 1;
+                }
+            });
+
+            const heatmapData = Object.entries(counts).map(([key, count]) => {
+                const [type, minute] = key.split('-');
+                return { type, minute: +minute, count };
+            })
+            .filter(d => d.type !== "Shootout" && d.minute <= 90);
+
+            const heatmapSpec = {
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "description": "Heatmap de Eventos por Minuto e Tipo",
+                "data": { "values": heatmapData },
+                "mark": "rect",
+                "width": WIDTH,
+                "height": 300,
+                "encoding": {
+                    "x": {
+                        "field": "minute",
+                        "type": "quantitative",
+                        "bin": { "step": 10 },
+                        "scale": { "domain": [0, 90] },
+                        "title": "Minuto do Jogo"
+                    },
+                    "y": {
+                        "field": "type",
+                        "type": "ordinal",
+                        "title": "Tipo de Evento"
+                    },
+                    "color": {
+                        "field": "count",
+                        "type": "quantitative",
+                        "scale": { "scheme": "reds", "domainMax": 10000 },
+                        "title": "Quantidade"
+                    },
+                    "tooltip": [
+                        { "field": "type", "title": "Tipo de Evento" },
+                        { "field": "minute", "title": "Minuto" },
+                        { "field": "count", "title": "Ocorrências" }
+                    ]
+                },
+                "config": {
+                    "axis": {
+                        "labelFontSize": 12,
+                        "titleFontSize": 14
+                    },
+                    "title": {
+                        "fontSize": 16
+                    }
+                }
+            };
+
+            vegaEmbed("#heatmap-events", heatmapSpec)
+                .then(() => console.log("Heatmap de eventos renderizado com sucesso"))
+                .catch(err => console.error("Erro ao renderizar heatmap:", err));
+        });
+
     }
 
     drawCharts();
