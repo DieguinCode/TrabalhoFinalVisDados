@@ -106,15 +106,20 @@
         <div id="heatmap-events"></div>
     </div>
 
+    <div class="chart-container">
+        <h2>Top 10 Países por Número de Transferências</h2>
+        <div id="pie-chart-transfers-country"></div>
+    </div>
 
     <script>
     async function drawCharts() {
         const WIDTH = 800;
 
-        const [transfersRaw, fifaData, worldAtlas] = await Promise.all([
+        const [transfersRaw, fifaData, worldAtlas, transfersWithCountry] = await Promise.all([
             d3.csv("transfers.csv"),
             d3.csv("FIFA - World Cup Summary.csv", d3.autoType), 
-            d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json")
+            d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"),
+            d3.csv("transfers_with_country.csv"),
         ]);
 
         // --- 1. DIAGRAMA DE CORDAS ---
@@ -442,6 +447,67 @@
                 .catch(err => console.error("Erro ao renderizar heatmap:", err));
         });
 
+        // --- 6. PieChart ---
+
+        const pieData = transfersWithCountry.map(d => d.country);
+
+        const pieSpec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Top 10 países por número de transferências",
+            "data": { "values": transfersWithCountry },
+            "transform": [
+                {
+                    "aggregate": [{"op": "count", "as": "count"}],
+                    "groupby": ["to_club_country"]
+                },
+                {
+                    "window": [{"op": "rank", "as": "rank"}],
+                    "sort": [{"field": "count", "order": "descending"}]
+                },
+                {
+                    "filter": "datum.rank <= 10"
+                },
+                {
+                    "joinaggregate": [{"op": "sum", "field": "count", "as": "total_transfers"}]
+                },
+                {
+                    "calculate": "datum.count / datum.total_transfers",
+                    "as": "percentage"
+                }
+            ],
+            "mark": {"type": "arc", "tooltip": true},
+            "encoding": {
+                "theta": {
+                    "field": "count", 
+                    "type": "quantitative",
+                    "title": "Número de Transferências"
+                },
+                "color": {
+                    "field": "to_club_country",
+                    "type": "nominal", 
+                    "title": "País",
+                    "sort": {"field": "count", "order": "descending"},
+                    "legend": {"orient": "right"}
+                },
+                "tooltip": [
+                    {"field": "to_club_country", "type": "nominal", "title": "País"},
+                    {"field": "count", "type": "quantitative", "title": "Transferências"},
+                    {"field": "percentage", "type": "quantitative", "title": "Porcentagem", "format": ".1%"}
+                ]
+            },
+            "width": 400,
+            "height": 300,
+            "config": {
+                "legend": {
+                    "labelFontSize": 12,
+                    "titleFontSize": 14
+                }
+            }
+        };
+
+        vegaEmbed("#pie-chart-transfers-country", pieSpec)
+            .then(result => console.log("Gráfico de pizza renderizado com sucesso"))
+            .catch(error => console.error("Erro ao renderizar gráfico de pizza:", error));
     }
 
     drawCharts();
